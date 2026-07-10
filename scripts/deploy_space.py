@@ -18,6 +18,11 @@ from huggingface_hub import HfApi
 SPACE_ID = "DeepParekh/health_agent"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# HealthVA calls the OpenAI API and needs no GPU. The Space was created on
+# ZeroGPU (hence "No @spaces.GPU function detected"); force it to the free
+# CPU tier here rather than fighting the settings UI.
+HARDWARE = "cpu-basic"
+
 # Never uploaded: secrets, local state, local-only docs, tooling.
 IGNORE = [
     ".env",
@@ -38,6 +43,15 @@ if __name__ == "__main__":
     api = HfApi()
     who = api.whoami()
     print(f"Authenticated as: {who['name']}")
+
+    # Set free CPU hardware before uploading so the rebuild lands on it.
+    current = api.get_space_runtime(SPACE_ID).hardware
+    if current != HARDWARE:
+        print(f"Setting hardware: {current} -> {HARDWARE}")
+        api.request_space_hardware(SPACE_ID, HARDWARE)
+    else:
+        print(f"Hardware already {HARDWARE}")
+
     info = api.upload_folder(
         folder_path=str(REPO_ROOT),
         repo_id=SPACE_ID,
