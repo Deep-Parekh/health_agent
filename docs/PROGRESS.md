@@ -13,8 +13,14 @@ per-session notes live in `PLAN.md`; design rationale in `README.md`.
 ## Workout domain & safety (built first, in the workout module)
 
 - Grounded tools over the local exercise DB: `exercise_search`, `build_workout`
-  (single session), `build_weekly_plan` (1–6 days/week mapped to real training splits;
-  7 days refused to enforce a rest day), `one_rep_max_calculator` (Epley + Brzycki).
+  (single session), `build_weekly_plan` (1–6 days/week; 7 days refused to enforce a
+  rest day), `one_rep_max_calculator` (Epley + Brzycki).
+- Database-grounded workout split catalog: 13 named options across 1–6 days/week,
+  including PPL, upper/lower, full-body, and mixed cardio plans. Split structure,
+  core placement, and cardio days are loaded from `workouts.db`; bad names and
+  frequency mismatches return the valid catalog for model self-correction. Build-time
+  validation and tests enforce one default per frequency, weekly major-muscle
+  coverage, and core frequency.
 - User constraints respected end to end: training frequency, equipment owned
   (bodyweight always implicitly available), body metrics (BMI screen — ≥30 excludes
   high-impact plyometrics), and injuries.
@@ -27,7 +33,7 @@ per-session notes live in `PLAN.md`; design rationale in `README.md`.
   with an escalation to a medical professional. Disclaimers are embedded in tool
   output so the model cannot omit them.
 - **Evaluated, not just tested**: 34/34 injury phrases classified correctly, 5/5
-  out-of-taxonomy refusals, 0 exclusion violations across 5,757 prescribed exercises
+  out-of-taxonomy refusals, 0 exclusion violations across 6,641 prescribed exercises
   in a 288-configuration sweep, 100% disclaimer coverage
   (`scripts/eval_injury_guardrail.py` → `docs/EVALUATION.md`).
 
@@ -58,14 +64,29 @@ per-session notes live in `PLAN.md`; design rationale in `README.md`.
   (SSN/email/phone), and prompt-leak requests are blocked with explanations.
 - **Observability**: every route decision, tool call, grounding event, and error goes
   to `logs/tool_calls.jsonl`; the UI shows the live route badge and tool trace.
+- **Gradio 6 chat compatibility**: the UI uses role/content message dictionaries and
+  converts them at the boundary to the agent's internal turn-pair history, preventing
+  first-prompt rendering failures while keeping orchestration unchanged.
 - Diet tools ported logic-unchanged from DietVA: BMR/TDEE (Mifflin-St Jeor), food
   lookup (FoodData Central subset), recipe search with dietary-restriction filters,
   kitchen unit conversion, web-search fallback.
 
+## UI & constraint fixes (2026-07-10)
+
+- Split catalog shipped: named, database-grounded splits (PPL, Upper/Lower, cardio
+  variants) with test-enforced weekly muscle coverage and core mixed in.
+- Chat UX fixed: submitted messages clear from the textbox and echo into the chat
+  instantly (two-stage Gradio flow) before the agent starts working.
+- Equipment by exclusion: "everything except a barbell" now maps to an
+  `exclude_equipment` tool parameter (NULL-safe SQL filter) — verified live: the model
+  passes it and plans contain no excluded equipment.
+
 ## Verification status
 
-- **20/20 unit tests** (router keyword paths, memory isolation/validation, the full
-  injury guardrail suite), with test isolation guaranteed not to touch production data.
+- **30/30 unit tests** (router keyword paths, memory isolation/validation, UI history,
+  the full
+  injury guardrail suite, and split catalog guarantees), with test isolation guaranteed
+  not to touch production data.
 - **`scripts/verify_deployment.py` all green, including `--live`** on the production stack
   (OpenAI `gpt-4o-mini` + Supabase Postgres): workout turn saved the profile and called
   the planner with zero grounding retries; diet turn grounded in recipe/web tools; the

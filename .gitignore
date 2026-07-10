@@ -71,6 +71,9 @@ diet_agent.pdf
 # local user profiles (never commit)
 data/users.db
 
+# generated source cache (workouts.db is the committed runtime artifact)
+data/exercises_raw.json
+
 # the example env file SHOULD be committed (real .env stays ignored)
 !.env.example
 

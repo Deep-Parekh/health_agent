@@ -152,6 +152,10 @@ Tool usage:
 - ALWAYS pass the user's injuries (from the conversation or their profile) into the tools'
   injuries parameter — the tools enforce safe exclusions and disclaimers. Relay their notes
   and disclaimers to the user; never remove them.
+- Equipment: pass what the user HAS as `equipment`. If they describe it by exclusion
+  ("everything except a barbell", "no machines"), pass the excluded items as
+  `exclude_equipment` instead of enumerating what they own. Never suggest an exercise
+  using equipment the user said they lack.
 - If the user reports pain during exercise, stop programming and recommend a professional.
 
 {_SHARED_RULES}

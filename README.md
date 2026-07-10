@@ -18,7 +18,8 @@ grounding is enforced by the harness (not the model's goodwill), and user profil
 persist across sessions.
 
 Combines [DietVA](https://huggingface.co/spaces/DeepParekh/diet_app) (diet agent) with the
-workout module (873-exercise public-domain DB, injury guardrails with a
+workout module (873 exercises plus 13 named splits in a public-domain-backed DB,
+injury guardrails with a
 [published evaluation](docs/EVALUATION.md)) — both source projects remain
 separate, deployed showcases.
 
@@ -41,7 +42,7 @@ user turn ──► router (keyword fast path ► LLM for ambiguous) ──► d
 | `healthva/agents.py` | Router (hybrid keyword/LLM), domain prompts, `HealthAgent` orchestration, grounding enforcement |
 | `healthva/memory.py` | `UserStore` — Supabase Postgres (`DATABASE_URL`) or local SQLite fallback; whitelisted profile schema; per-session `UserScope` + Postgres row-level security for cross-user isolation; get/update profile tools |
 | `healthva/diet_tools.py` | BMR/TDEE, food lookup (FoodData Central subset), recipe search, unit convert, web search |
-| `healthva/workout_tools.py` | Exercise search, session & weekly plan builders, 1RM — with injury classification and joint load-path exclusions |
+| `healthva/workout_tools.py` | Exercise search, session & weekly plan builders, 1RM — with 13 database-grounded named splits, cardio days, injury classification, and joint load-path exclusions |
 | `healthva/common.py` | Config, LLM backends (OpenAI deployed; Groq/Ollama supported), input guardrails, JSONL tool logging |
 | `app.py` | Gradio UI: username-keyed profiles, live route badge, agent activity panel |
 
@@ -55,6 +56,10 @@ user turn ──► router (keyword fast path ► LLM for ambiguous) ──► d
   no workout tool ran, the harness rejects it and retries with an enforcement nudge; a
   second failure appends a visible warning. Verified to catch and correct a 3B local model
   that ignored prompt instructions.
+- **Database-grounded split catalog**: `build_weekly_plan` accepts named splits such as
+  `ppl` and `ul_cardio`; split structure, core placement, and cardio days come from
+  `workouts.db`. Build-time validation and tests guarantee one default per frequency,
+  full weekly muscle coverage, and core at least twice per week (once for a 1-day plan).
 - **Memory safety**: profile fields are whitelisted (no names/emails/identifiers), empty
   lists are treated as no-change so a model can't silently wipe stored injuries, and the
   profile is injected as context each turn so the agent doesn't re-ask.
@@ -83,7 +88,7 @@ Backend auto-detects from whichever key is set: `OPENAI_API_KEY` → OpenAI (gpt
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t . -v                    # 22 tests
+python -m unittest discover -s tests -t . -v                    # 30 tests
 python scripts/eval_injury_guardrail.py            # regenerates docs/EVALUATION.md
 ```
 

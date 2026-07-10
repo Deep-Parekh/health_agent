@@ -10,8 +10,10 @@ so these tools can be appended directly to its tool list when merging.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Union
 
@@ -130,7 +132,7 @@ INJURY_DISCLAIMER = (
     "consult a physician or physical therapist before training with an injury."
 )
 
-# Training splits by available days per week.
+# Compatibility fallback for databases built before the split catalog existed.
 _PUSH = ["chest", "shoulders", "triceps"]
 _PULL = ["lats", "middle back", "biceps", "forearms"]
 _LEGS = ["quadriceps", "hamstrings", "glutes", "calves"]
@@ -159,6 +161,143 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(WORKOUTS_DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _fallback_split_catalog() -> Dict[str, dict]:
+    """Represent the original hardcoded defaults in the catalog shape."""
+    ids = {
+        1: "full_body",
+        2: "full_body_ab",
+        3: "ppl",
+        4: "upper_lower_4",
+        5: "ppl_upper_lower",
+        6: "ppl_6",
+    }
+    names = {
+        1: "Full Body",
+        2: "Full Body A/B",
+        3: "Push / Pull / Legs",
+        4: "Upper / Lower x2",
+        5: "PPL + Upper / Lower",
+        6: "PPL x2",
+    }
+    return {
+        ids[frequency]: {
+            "id": ids[frequency],
+            "name": names[frequency],
+            "days_per_week": frequency,
+            "is_default": True,
+            "description": "Built-in compatibility split for an older workout database.",
+            "days": [
+                {"day": day_name, "muscles": list(muscles), "is_cardio": False}
+                for day_name, muscles in days
+            ],
+        }
+        for frequency, days in SPLITS.items()
+    }
+
+
+@lru_cache(maxsize=1)
+def load_splits() -> Dict[str, dict]:
+    """Load the grounded split catalog, falling back for pre-catalog databases."""
+    try:
+        with _connect() as conn:
+            split_rows = conn.execute(
+                "SELECT id, name, days_per_week, is_default, description "
+                "FROM splits ORDER BY days_per_week, is_default DESC, name"
+            ).fetchall()
+            if not split_rows:
+                return _fallback_split_catalog()
+
+            catalog: Dict[str, dict] = {}
+            for row in split_rows:
+                day_rows = conn.execute(
+                    "SELECT day_name, muscles, is_cardio FROM split_days "
+                    "WHERE split_id = ? ORDER BY day_order",
+                    (row["id"],),
+                ).fetchall()
+                catalog[row["id"]] = {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "days_per_week": row["days_per_week"],
+                    "is_default": bool(row["is_default"]),
+                    "description": row["description"],
+                    "days": [
+                        {
+                            "day": day["day_name"],
+                            "muscles": json.loads(day["muscles"]),
+                            "is_cardio": bool(day["is_cardio"]),
+                        }
+                        for day in day_rows
+                    ],
+                }
+            return catalog
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc).lower():
+            raise
+        return _fallback_split_catalog()
+
+
+def _format_split_catalog(
+    catalog: Dict[str, dict], days_per_week: Optional[int] = None
+) -> str:
+    options = [
+        split
+        for split in catalog.values()
+        if days_per_week is None or split["days_per_week"] == days_per_week
+    ]
+    return "\n".join(
+        f"{split['id']} — {split['name']} ({split['days_per_week']}d/week)"
+        for split in sorted(options, key=lambda item: (item["days_per_week"], item["name"]))
+    )
+
+
+def _normalize_split_name(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", " ", value.lower().replace("×", "x"))
+    return " ".join(token for token in normalized.split() if token != "with")
+
+
+def _select_split(days_per_week: int, requested: Optional[str]) -> dict:
+    catalog = load_splits()
+    if requested:
+        requested_key = _normalize_split_name(requested)
+        selected = next(
+            (
+                split
+                for split in catalog.values()
+                if requested_key
+                in {
+                    _normalize_split_name(split["id"]),
+                    _normalize_split_name(split["name"]),
+                }
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError(
+                f"Unknown split '{requested}'. Available splits:\n"
+                + _format_split_catalog(catalog)
+            )
+        if selected["days_per_week"] != days_per_week:
+            raise ValueError(
+                f"Split '{selected['name']}' requires {selected['days_per_week']} "
+                f"training days, not {days_per_week}. Available {days_per_week}-day "
+                "splits:\n"
+                + _format_split_catalog(catalog, days_per_week)
+            )
+        return selected
+
+    defaults = [
+        split
+        for split in catalog.values()
+        if split["days_per_week"] == days_per_week and split["is_default"]
+    ]
+    if len(defaults) != 1:
+        raise ValueError(
+            f"Expected exactly one default split for {days_per_week} training days; "
+            f"found {len(defaults)}."
+        )
+    return defaults[0]
 
 
 def _normalize_equipment(equipment: Union[str, List[str], None]) -> Optional[List[str]]:
@@ -250,6 +389,7 @@ def exercise_search(
     exclude_muscles: Optional[List[str]] = None,
     exclude_categories: Optional[List[str]] = None,
     exclude_force_rules: Optional[List[dict]] = None,
+    exclude_equipment: Union[str, List[str], None] = None,
     max_results: int = 5,
 ) -> List[dict]:
     """Query the local exercise DB with any combination of filters."""
@@ -272,6 +412,16 @@ def exercise_search(
         placeholders = ", ".join("?" for _ in equipment_list)
         sql += f" AND e.equipment IN ({placeholders})"
         params.extend(equipment_list)
+    if exclude_equipment:
+        if isinstance(exclude_equipment, str):
+            exclude_equipment = [exclude_equipment]
+        excluded = [e.lower().strip() for e in exclude_equipment if e and e.strip()]
+        if excluded:
+            placeholders = ", ".join("?" for _ in excluded)
+            # NULL-safe: rows with no equipment (bodyweight-ish) must survive a
+            # NOT IN filter, which plain SQL three-valued logic would drop.
+            sql += f" AND (e.equipment IS NULL OR e.equipment NOT IN ({placeholders}))"
+            params.extend(excluded)
     if category:
         sql += " AND e.category = ?"
         params.append(category.lower().strip())
@@ -358,6 +508,7 @@ def _pick_exercises(
     exclude_force_rules: List[dict],
     count: int,
     used_names: set,
+    exclude_equipment: Union[str, List[str], None] = None,
 ) -> List[dict]:
     """Pick exercises for a muscle, preferring compounds and week-level variety."""
     candidates = exercise_search(
@@ -367,6 +518,7 @@ def _pick_exercises(
         exclude_muscles=exclude_muscles,
         exclude_categories=exclude_categories,
         exclude_force_rules=exclude_force_rules,
+        exclude_equipment=exclude_equipment,
         max_results=count * 5,
     )
     if not candidates and equipment:
@@ -377,6 +529,7 @@ def _pick_exercises(
             exclude_muscles=exclude_muscles,
             exclude_categories=exclude_categories,
             exclude_force_rules=exclude_force_rules,
+            exclude_equipment=exclude_equipment,
             max_results=count * 5,
         )
     compound = [e for e in candidates if e["mechanic"] == "compound"]
@@ -388,12 +541,54 @@ def _pick_exercises(
     return picks
 
 
+def _pick_cardio_exercises(
+    level: str,
+    equipment: Union[str, List[str], None],
+    exclude_muscles: List[str],
+    exclude_categories: List[str],
+    exclude_force_rules: List[dict],
+    count: int,
+    used_names: set,
+    exclude_equipment: Union[str, List[str], None] = None,
+) -> List[dict]:
+    """Pick grounded cardio exercises under the same safety constraints."""
+    candidates = exercise_search(
+        level=level,
+        equipment=equipment,
+        category="cardio",
+        exclude_muscles=exclude_muscles,
+        exclude_categories=exclude_categories,
+        exclude_force_rules=exclude_force_rules,
+        exclude_equipment=exclude_equipment,
+        max_results=count * 5,
+    )
+    if not candidates and equipment:
+        candidates = exercise_search(
+            level=level,
+            equipment="body only",
+            category="cardio",
+            exclude_muscles=exclude_muscles,
+            exclude_categories=exclude_categories,
+            exclude_force_rules=exclude_force_rules,
+            exclude_equipment=exclude_equipment,
+            max_results=count * 5,
+        )
+    fresh = [exercise for exercise in candidates if exercise["name"] not in used_names]
+    picks = (
+        fresh
+        + [exercise for exercise in candidates if exercise["name"] in used_names]
+    )[:count]
+    used_names.update(exercise["name"] for exercise in picks)
+    return picks
+
+
 def build_workout(
     muscles: List[str],
     level: str = "beginner",
     equipment: Union[str, List[str], None] = None,
     injuries: Optional[List[str]] = None,
     exercises_per_muscle: int = 2,
+    exclude_equipment: Union[str, List[str], None] = None,
 ) -> dict:
     """Assemble a single-session workout: compound lifts first, then isolation."""
     exclusions = resolve_injury_exclusions(injuries)
@@ -409,6 +604,7 @@ def build_workout(
             muscle_key, level, equipment,
             exclusions["muscles"], exclusions["categories"],
             exclusions["force_rules"], exercises_per_muscle, used,
+            exclude_equipment=exclude_equipment,
         )
         if not picks:
             missing.append(muscle)
@@ -441,8 +637,10 @@ def build_weekly_plan(
     weight_kg: Optional[float] = None,
     height_cm: Optional[float] = None,
     exercises_per_muscle: int = 2,
+    split: Optional[str] = None,
+    exclude_equipment: Union[str, List[str], None] = None,
 ) -> dict:
-    """Build a weekly training plan respecting frequency, equipment, injuries, and body metrics."""
+    """Build a grounded weekly plan from a named or default database split."""
     if days_per_week < 1:
         raise ValueError("days_per_week must be at least 1")
     if days_per_week > 6:
@@ -450,6 +648,7 @@ def build_weekly_plan(
             "Plans are capped at 6 training days: at least one full rest day per "
             "week is required for recovery."
         )
+    selected_split = _select_split(days_per_week, split)
     exclusions = resolve_injury_exclusions(injuries)
     bmi_exclusions, notes = _bmi_notes(weight_kg, height_cm)
     exclude_categories = sorted(set(exclusions["categories"] + bmi_exclusions))
@@ -458,15 +657,43 @@ def build_weekly_plan(
     used: set = set()
     all_skipped: set = set()
     no_safe_match: set = set()
-    for day_name, day_muscles in SPLITS[days_per_week]:
+    for split_day in selected_split["days"]:
+        day_name = split_day["day"]
+        day_muscles = split_day["muscles"]
         trainable = [m for m in day_muscles if m not in exclusions["muscles"]]
         all_skipped.update(m for m in day_muscles if m in exclusions["muscles"])
         session = []
+        if split_day["is_cardio"]:
+            cardio_picks = _pick_cardio_exercises(
+                level,
+                equipment,
+                exclusions["muscles"],
+                exclude_categories,
+                exclusions["force_rules"],
+                exercises_per_muscle,
+                used,
+                exclude_equipment=exclude_equipment,
+            )
+            if not cardio_picks:
+                no_safe_match.add("cardio")
+            for ex in cardio_picks:
+                session.append(
+                    {
+                        "muscle": "cardio",
+                        "name": ex["name"],
+                        "mechanic": ex["mechanic"],
+                        "equipment": ex["equipment"],
+                        "category": ex["category"],
+                        "suggested_sets": 1,
+                        "suggested_reps": "20-30 minutes",
+                    }
+                )
         for muscle in trainable:
             picks = _pick_exercises(
                 muscle, level, equipment,
                 exclusions["muscles"], exclude_categories,
                 exclusions["force_rules"], exercises_per_muscle, used,
+                exclude_equipment=exclude_equipment,
             )
             if not picks:
                 no_safe_match.add(muscle)
@@ -477,11 +704,18 @@ def build_weekly_plan(
                         "name": ex["name"],
                         "mechanic": ex["mechanic"],
                         "equipment": ex["equipment"],
+                        "category": ex["category"],
                         "suggested_sets": 3,
                         "suggested_reps": "8-12" if ex["mechanic"] == "compound" else "10-15",
                     }
                 )
-        days.append({"day": day_name, "exercises": session})
+        days.append(
+            {
+                "day": day_name,
+                "is_cardio": split_day["is_cardio"],
+                "exercises": session,
+            }
+        )
 
     interpretation = format_injury_interpretation(exclusions["mapped"])
     if interpretation:
@@ -503,7 +737,13 @@ def build_weekly_plan(
                 else " (given the level/equipment constraints)"
             )
         )
-    return {"days_per_week": days_per_week, "days": days, "notes": notes}
+    return {
+        "split_id": selected_split["id"],
+        "split_name": selected_split["name"],
+        "days_per_week": days_per_week,
+        "days": days,
+        "notes": notes,
+    }
 
 
 def one_rep_max(weight: float, reps: int) -> dict:
@@ -524,12 +764,18 @@ def one_rep_max(weight: float, reps: int) -> dict:
 # --- LangChain tool wrappers (same pattern as the diet agent) ---
 
 def _format_session(session: List[dict], start: int = 1) -> List[str]:
-    return [
-        f"{i}. {ex['name']} ({ex['muscle']}, {ex['mechanic'] or 'n/a'}, "
-        f"{ex['equipment'] or 'no equipment'}) — "
-        f"{ex['suggested_sets']} sets x {ex['suggested_reps']} reps"
-        for i, ex in enumerate(session, start)
-    ]
+    lines = []
+    for i, ex in enumerate(session, start):
+        details = (
+            f"{i}. {ex['name']} ({ex['muscle']}, {ex['mechanic'] or 'n/a'}, "
+            f"{ex['equipment'] or 'no equipment'}) — "
+        )
+        if ex.get("category") == "cardio":
+            details += ex["suggested_reps"]
+        else:
+            details += f"{ex['suggested_sets']} sets x {ex['suggested_reps']} reps"
+        lines.append(details)
+    return lines
 
 
 class ExerciseSearchArgs(BaseModel):
@@ -542,6 +788,14 @@ class ExerciseSearchArgs(BaseModel):
         description=(
             "Equipment the user has available (bodyweight exercises are always "
             f"included). Valid values: {', '.join(EQUIPMENT)}"
+        ),
+    )
+    exclude_equipment: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Equipment the user does NOT have or wants to avoid — use this when the "
+            "user describes equipment by exclusion, e.g. 'everything except barbell' "
+            f"-> exclude_equipment=['barbell']. Valid values: {', '.join(EQUIPMENT)}"
         ),
     )
     category: Optional[str] = Field(
@@ -578,13 +832,14 @@ class ExerciseSearchTool(BaseTool):
         category: Optional[str] = None,
         keyword: Optional[str] = None,
         injuries: Optional[List[str]] = None,
+        exclude_equipment: Optional[List[str]] = None,
         max_results: Any = 5,
     ) -> str:
         try:
             max_results = int(max_results)
         except (ValueError, TypeError):
             max_results = 5
-        if not any([muscle, level, equipment, category, keyword]):
+        if not any([muscle, level, equipment, category, keyword, exclude_equipment]):
             return (
                 "Provide at least one filter. Valid muscle groups: "
                 + ", ".join(MUSCLE_GROUPS)
@@ -599,7 +854,7 @@ class ExerciseSearchTool(BaseTool):
             results = exercise_search(
                 muscle, level, equipment, category, keyword,
                 exclusions["muscles"], exclusions["categories"],
-                exclusions["force_rules"], max_results,
+                exclusions["force_rules"], exclude_equipment, max_results,
             )
         except Exception as exc:
             return f"Exercise search error: {exc}"
@@ -646,6 +901,14 @@ class BuildWorkoutArgs(BaseModel):
             f"Valid values: {', '.join(EQUIPMENT)}"
         ),
     )
+    exclude_equipment: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Equipment the user does NOT have or wants to avoid — use this when the "
+            "user describes equipment by exclusion, e.g. 'everything except barbell' "
+            f"-> exclude_equipment=['barbell']. Valid values: {', '.join(EQUIPMENT)}"
+        ),
+    )
     injuries: Optional[List[str]] = Field(
         None,
         description=(
@@ -675,6 +938,7 @@ class BuildWorkoutTool(BaseTool):
         equipment: Optional[List[str]] = None,
         injuries: Optional[List[str]] = None,
         exercises_per_muscle: Any = 2,
+        exclude_equipment: Optional[List[str]] = None,
     ) -> str:
         try:
             exercises_per_muscle = max(1, min(4, int(exercises_per_muscle)))
@@ -687,7 +951,10 @@ class BuildWorkoutTool(BaseTool):
                 + ", ".join(MUSCLE_GROUPS)
             )
         try:
-            plan = build_workout(muscles, level, equipment, injuries, exercises_per_muscle)
+            plan = build_workout(
+                muscles, level, equipment, injuries, exercises_per_muscle,
+                exclude_equipment=exclude_equipment,
+            )
         except Exception as exc:
             return f"Workout builder error: {exc}"
         if not plan["session"]:
@@ -716,12 +983,27 @@ class BuildWeeklyPlanArgs(BaseModel):
     days_per_week: int = Field(
         ..., description="Training days per week (1-6; at least one rest day is enforced)"
     )
+    split: Optional[str] = Field(
+        None,
+        description=(
+            "Optional named workout split ID. Omit to use the default for the "
+            f"requested frequency. Valid IDs: {', '.join(load_splits())}"
+        ),
+    )
     level: str = Field("beginner", description="beginner, intermediate, or expert")
     equipment: Optional[List[str]] = Field(
         None,
         description=(
             "Equipment/machines the user has available (bodyweight is always "
             f"included). Valid values: {', '.join(EQUIPMENT)}"
+        ),
+    )
+    exclude_equipment: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Equipment the user does NOT have or wants to avoid — use this when the "
+            "user describes equipment by exclusion, e.g. 'everything except barbell' "
+            f"-> exclude_equipment=['barbell']. Valid values: {', '.join(EQUIPMENT)}"
         ),
     )
     injuries: Optional[List[str]] = Field(
@@ -748,9 +1030,9 @@ class BuildWeeklyPlanTool(BaseTool):
         "how many days per week the user can train (1-6), what equipment/machines "
         "they have, reported injuries (affected areas are excluded), and optional "
         "body metrics (weight/height, used as a rough BMI screen to avoid "
-        "high-impact work when appropriate). Picks an appropriate split: full body, "
-        "push/pull/legs, or upper/lower. This is general fitness information, not "
-        "medical advice."
+        "high-impact work when appropriate). Supports named, database-grounded "
+        "strength/cardio splits and uses the frequency default when no split is "
+        "requested. This is general fitness information, not medical advice."
     )
     args_schema: ClassVar[type[BuildWeeklyPlanArgs]] = BuildWeeklyPlanArgs
 
@@ -763,6 +1045,8 @@ class BuildWeeklyPlanTool(BaseTool):
         weight_kg: Any = None,
         height_cm: Any = None,
         exercises_per_muscle: Any = 2,
+        split: Optional[str] = None,
+        exclude_equipment: Optional[List[str]] = None,
     ) -> str:
         try:
             days_per_week = int(days_per_week)
@@ -779,12 +1063,22 @@ class BuildWeeklyPlanTool(BaseTool):
             return "weight_kg and height_cm must be numbers (or omitted)."
         try:
             plan = build_weekly_plan(
-                days_per_week, level, equipment, injuries,
-                weight_kg, height_cm, exercises_per_muscle,
+                days_per_week=days_per_week,
+                level=level,
+                equipment=equipment,
+                injuries=injuries,
+                weight_kg=weight_kg,
+                height_cm=height_cm,
+                exercises_per_muscle=exercises_per_muscle,
+                split=split,
+                exclude_equipment=exclude_equipment,
             )
         except Exception as exc:
             return f"Weekly plan error: {exc}"
-        lines = [f"Weekly plan: {plan['days_per_week']} training day(s)"]
+        lines = [
+            f"Weekly plan: {plan['split_name']} "
+            f"({plan['days_per_week']} training day(s))"
+        ]
         for day in plan["days"]:
             lines.append(f"\n{day['day']}:")
             if day["exercises"]:

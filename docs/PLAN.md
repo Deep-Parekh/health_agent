@@ -77,7 +77,7 @@ Hosting is HF Spaces; Supabase provides only the Postgres database.
 
 ## Step 7 — Hand-off to portfolio phases ⬜
 
-- [ ] GitHub Actions: run the 20 unit tests on push
+- [ ] GitHub Actions: run the 30 unit tests on push
 - [ ] `eval_injury_guardrail.py`: also emit `results.json` for the portfolio eval page
 - [ ] Record the 20–30s demo GIF of the cross-domain prompt (after OpenAI verification)
 
@@ -286,3 +286,70 @@ Append dated entries. Include errors verbatim enough to be searchable.
   0 violations across 5,757 prescribed exercises, 100% disclaimer coverage).
 - Full re-verification after the move: 22/22 tests, deployment checks all green
   (isolation still zero-rows), `app.py` imports clean.
+
+### 2026-07-10 — Database-grounded workout split catalog (GPT session)
+
+- Implemented `docs/SPLITS_PLAN.md`: `data/workouts.db` now has `splits` and
+  `split_days` tables with 13 named options across 1–6 training days. The schema
+  enforces valid frequencies/booleans, ordered days, referential integrity, and one
+  default per frequency; `scripts/data_prep.py` validates weekly muscle/core coverage
+  before inserting anything and prints a catalog summary.
+- `build_weekly_plan` accepts an optional split ID or normalized display name, defaults
+  by frequency, and returns the valid catalog for unknown or frequency-mismatched
+  requests. Split/day structure is loaded from SQLite with a cached compatibility
+  fallback for old databases. Cardio is now a first-class day type and uses
+  `exercise_search(category="cardio")` under the existing injury/equipment exclusions;
+  core work is mixed into catalog-defined days.
+- Two contradictions in the draft catalog were corrected to satisfy its own guarantees:
+  the 2-day Upper/Lower option now includes core on both days (the stated minimum is
+  twice weekly), and FULL explicitly includes biceps so the generated 1-day plan's
+  primary+secondary exercise coverage contains every required major muscle group.
+- Added `tests/test_split_catalog.py`: catalog/default integrity, generated weekly
+  coverage and core frequency for all 13 splits, self-correcting refusals, cardio-only
+  category picks plus core, natural display-name matching, torn-ACL safety interaction,
+  and old-DB fallback. Full suite: **29/29 passed**.
+- Re-ran `scripts/eval_injury_guardrail.py`: **34/34** classifications, **5/5**
+  refusals, **0 violations across 6,641 prescribed exercises**, and **0 missing
+  disclaimers**. `docs/EVALUATION.md`, README, PROGRESS, SPLITS_PLAN, and the local
+  architecture guide were updated.
+
+### 2026-07-10 — Gradio 6 first-prompt rendering fix (GPT session)
+
+- Local testing exposed `gradio.exceptions.Error: "Data incompatible with messages
+  format. Each message should be a dictionary with 'role' and 'content' keys or a
+  ChatMessage object."` after the agent had successfully completed its first turn.
+- Root cause: Gradio 6 requires messages format, while `app.py` still returned the
+  legacy `[[user, assistant]]` tuple format. Small boundary helpers now append
+  role/content dictionaries and convert prior messages back to the pair format expected
+  by `HealthAgent.chat`; guardrail-blocked responses use the same path. Gradio 6 also
+  removed the old `Chatbot(type=...)` selector, so no compatibility flag is passed.
+- Added `tests/test_app_ui.py` to lock the two-way history conversion. Full suite:
+  **30/30 passed**.
+
+### 2026-07-10 — Two bug fixes: Gradio textbox + equipment exclusion (Claude session)
+
+- Context: Deep implemented the split catalog (docs/SPLITS_PLAN.md, all boxes checked,
+  29→35 tests) and migrated app.py to Gradio 6 messages format, then reported two bugs
+  from local runs.
+- **E8 (UI):** submitted messages stayed in the textbox. Cause: two independent
+  `msg.submit()` listeners (respond + a clearing lambda) — unreliable in Gradio 6.
+  Fix: canonical chained flow — `queue_message` (echoes the user message into the chat
+  and returns "" for the textbox, instantly) `.then()` `generate_reply` (guardrails +
+  agent). Bonus UX: the user's message now appears immediately instead of after the
+  LLM finishes. Guardrail replies now append to an already-echoed user message.
+  Note: `agent.chat` receives `_history_pairs(history[:-1])` because it appends the
+  current message itself — don't "fix" that slice.
+- **E9 (equipment):** "I have everything except a barbell" still produced barbell
+  exercises. Cause: tools only accepted an *inclusion* list; the model had no way to
+  express exclusion and passed nothing → all equipment allowed. Fix: `exclude_equipment`
+  threaded through exercise_search (NULL-safe SQL: `equipment IS NULL OR NOT IN`),
+  both pickers, build_workout, build_weekly_plan, all three tool schemas, plus a
+  WORKOUT_PROMPT rule to use it for exclusion-phrased equipment. Verified live via
+  gradio_client: the model passed exclude_equipment=['barbell'] and the plan contained
+  zero barbell exercises.
+- Tests: 37/37 (5 new equipment tests in tests/test_equipment.py; tests/test_app_ui.py
+  updated to the two-stage helpers). Injury eval re-run: still 0 violations.
+- **Gotcha (cost 1 debug round):** a stale `python app.py` from an earlier session held
+  port 7860, so the new boot died ("Cannot find empty port") and gradio_client silently
+  tested the OLD process. Before UI testing: `pkill -f app.py` and check
+  `lsof -iTCP:7860`.
