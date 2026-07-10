@@ -17,12 +17,18 @@ Usage:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
 import sqlite3
 from datetime import date
 from itertools import product
 from pathlib import Path
 
-from workout_tools import (
+from healthva.workout_tools import (
     INJURY_DISCLAIMER,
     INJURY_EXCLUSIONS,
     LEVELS,
@@ -31,13 +37,13 @@ from workout_tools import (
     classify_injury,
     resolve_injury_exclusions,
 )
-from test_injury_guardrail import (
+from tests.test_injury_guardrail import (
     CLASSIFICATION_CASES,
     UNCLASSIFIABLE_CASES,
     violates_exclusions,
 )
 
-REPORT_PATH = Path(__file__).resolve().parent / "EVALUATION.md"
+REPORT_PATH = Path(__file__).resolve().parents[1] / "docs" / "EVALUATION.md"
 
 EQUIPMENT_CONFIGS = [
     ("any equipment", None),

@@ -22,7 +22,7 @@ IMAGE_BASE_URL = (
     "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/"
 )
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[1]  # repo root
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "workouts.db"
 RAW_JSON_PATH = DATA_DIR / "exercises_raw.json"

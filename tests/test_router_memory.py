@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agents import keyword_route, route_query
-from memory import UserStore, validate_profile_updates
+from healthva.agents import keyword_route, route_query
+from healthva.memory import UserStore, validate_profile_updates
 
 ROUTE_CASES = [
     ("What should I eat for breakfast?", "diet"),
@@ -48,10 +48,10 @@ class TestUserStore(unittest.TestCase):
     def setUp(self):
         # Isolated SQLite DB per test run
         self._tmp = tempfile.TemporaryDirectory()
-        import memory
+        import healthva.memory as memory
         self._orig = memory.USERS_DB_PATH
         memory.USERS_DB_PATH = Path(self._tmp.name) / "users.db"
-        import common
+        import healthva.common as common
         common.USERS_DB_PATH = memory.USERS_DB_PATH
         # Tests must NEVER touch the real Postgres from .env — strip the env var
         # for the store's lifetime instead of overriding attributes post-hoc.
@@ -63,7 +63,7 @@ class TestUserStore(unittest.TestCase):
 
     def tearDown(self):
         self._env.stop()
-        import memory
+        import healthva.memory as memory
         memory.USERS_DB_PATH = self._orig
         self._tmp.cleanup()
 
@@ -99,7 +99,7 @@ class TestUserStore(unittest.TestCase):
         """The session-facing API must have no parameter that names a user:
         cross-user access should be structurally impossible, not just forbidden."""
         import inspect
-        from memory import UserScope
+        from healthva.memory import UserScope
         for method in ("get_profile", "update_profile", "delete_profile"):
             params = inspect.signature(getattr(UserScope, method)).parameters
             self.assertNotIn("username", params, f"{method} must not accept a username")

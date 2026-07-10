@@ -14,6 +14,12 @@ Usage:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
 import os
 import sys
 
@@ -54,7 +60,7 @@ def check_env() -> str:
 
 
 def check_store():
-    from memory import UserStore
+    from healthva.memory import UserStore
 
     try:
         store = UserStore()
@@ -109,7 +115,7 @@ def check_isolation(store) -> None:
 
 
 def check_llm(backend: str):
-    from common import HealthAgentConfig, build_llm
+    from healthva.common import HealthAgentConfig, build_llm
 
     models = {"openai": "gpt-4o-mini", "groq": "llama-3.3-70b-versatile", "ollama": "qwen2.5:3b"}
     config = HealthAgentConfig(backend=backend, model_id=models.get(backend, "gpt-4o-mini"))
@@ -123,8 +129,8 @@ def check_llm(backend: str):
 
 
 def check_live(config, store) -> None:
-    from common import ToolLoggingHandler, TOOL_LOG_PATH
-    from agents import HealthAgent
+    from healthva.common import ToolLoggingHandler, TOOL_LOG_PATH
+    from healthva.agents import HealthAgent
 
     agent = HealthAgent(config, store=store)
     log = ToolLoggingHandler(TOOL_LOG_PATH)

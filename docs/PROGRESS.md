@@ -29,7 +29,7 @@ per-session notes live in `PLAN.md`; design rationale in `README.md`.
 - **Evaluated, not just tested**: 34/34 injury phrases classified correctly, 5/5
   out-of-taxonomy refusals, 0 exclusion violations across 5,757 prescribed exercises
   in a 288-configuration sweep, 100% disclaimer coverage
-  (`eval_injury_guardrail.py` → `EVALUATION.md`).
+  (`scripts/eval_injury_guardrail.py` → `docs/EVALUATION.md`).
 
 ## The merged agent (this repo)
 
@@ -66,7 +66,7 @@ per-session notes live in `PLAN.md`; design rationale in `README.md`.
 
 - **20/20 unit tests** (router keyword paths, memory isolation/validation, the full
   injury guardrail suite), with test isolation guaranteed not to touch production data.
-- **`verify_deployment.py` all green, including `--live`** on the production stack
+- **`scripts/verify_deployment.py` all green, including `--live`** on the production stack
   (OpenAI `gpt-4o-mini` + Supabase Postgres): workout turn saved the profile and called
   the planner with zero grounding retries; diet turn grounded in recipe/web tools; the
   cross-domain prompt routed to `both` and chained tools across domains; the profile
@@ -77,6 +77,6 @@ per-session notes live in `PLAN.md`; design rationale in `README.md`.
 ## Remaining before launch
 
 - Create the HF Space, add `OPENAI_API_KEY` + `DATABASE_URL` as Space secrets, push,
-  and smoke-test live (`verify_deployment.py` prompts).
+  and smoke-test live (`scripts/verify_deployment.py` prompts).
 - Then: portfolio case study page, scientific eval report page, CI (see `PLAN.md`
   roadmap; a developer debug mode is planned and deliberately parked).

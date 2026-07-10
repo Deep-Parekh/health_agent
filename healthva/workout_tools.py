@@ -19,9 +19,9 @@ from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 
 try:
-    from common import WORKOUTS_DB_PATH  # Spaces-aware path (/tmp/data on HF)
+    from healthva.common import WORKOUTS_DB_PATH  # Spaces-aware path (/tmp/data on HF)
 except ImportError:  # standalone use (tests, eval) outside the app
-    WORKOUTS_DB_PATH = Path(__file__).resolve().parent / "data" / "workouts.db"
+    WORKOUTS_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "workouts.db"
 
 # Canonical vocabulary from the dataset — returned to the model so it never
 # has to guess valid filter values.

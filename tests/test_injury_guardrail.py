@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 import unittest
 
-from workout_tools import (
+from healthva.workout_tools import (
     INJURY_EXCLUSIONS,
     WORKOUTS_DB_PATH,
     BuildWeeklyPlanTool,

@@ -25,7 +25,7 @@ logger = logging.getLogger("health_agent")
 
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[1]  # repo root
 REPO_DATA_DIR = BASE_DIR / "data"
 
 # HF Spaces has a read-only repo filesystem; write under /tmp there.

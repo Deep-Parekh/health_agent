@@ -22,7 +22,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, PrivateAttr
 from langchain.tools import BaseTool
 
-from common import USERS_DB_PATH, logger
+from healthva.common import USERS_DB_PATH, logger
 
 # The only fields a profile may contain. Everything else is rejected.
 PROFILE_FIELDS = {

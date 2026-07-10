@@ -255,3 +255,34 @@ Append dated entries. Include errors verbatim enough to be searchable.
 - Contract addition: the RLS policy name (`user_isolation`), the `app.current_user`
   GUC, and startup role detection are now part of the memory-layer contract — schema
   changes must keep them intact.
+
+### 2026-07-09 — First push to GitHub (Claude session)
+
+- Repo live at https://github.com/Deep-Parekh/health_agent (branch `main`, commit
+  `3f91cd8`). Deep's push had failed simply because the repo had no commits yet —
+  remote was configured, staging was clean.
+- Pre-push audit confirmed excluded from the commit: `.env`, `data/users.db`,
+  `logs/`, `architecture.html` (local-only by choice). Committed on purpose:
+  `data/recipes.db` (25 MB), `data/workouts.db`, `data/fdc_subset.json` — HF Spaces
+  installs from the repo and needs them. GitHub's hard limit is 100 MB/file, so fine.
+- This same repo can now be added as the HF Space remote for Step 6
+  (`git remote add space https://huggingface.co/spaces/<name>` + push).
+
+### 2026-07-09 — Repo reorganized into logical folders (Claude session)
+
+- New layout: `healthva/` (the package: agents, common, memory, diet_tools,
+  workout_tools), `scripts/` (data_prep, verify_deployment, eval_injury_guardrail),
+  `tests/`, `docs/` (PLAN, PROGRESS, DEBUG_MODE_PLAN, EVALUATION, architecture.html
+  [still git-ignored]). `app.py` + `requirements.txt` MUST stay at repo root — HF
+  Spaces' Gradio SDK looks for them there.
+- Mechanics future agents should know: imports are now `from healthva.x import …`;
+  scripts carry a 3-line `sys.path` shim so `python scripts/foo.py` works from anywhere;
+  `common.BASE_DIR`/`data_prep.BASE_DIR` use `parents[1]` (repo root) since the files
+  moved one level down; the eval imports its labeled cases from `tests.test_injury_guardrail`
+  and writes to `docs/EVALUATION.md`.
+- Test command changed: `python -m unittest discover -s tests -t .` (22 tests).
+- Ran the injury-guardrail eval in THIS repo for the first time → committed
+  `docs/EVALUATION.md` (same results as lifestyle_agent: 34/34 classification,
+  0 violations across 5,757 prescribed exercises, 100% disclaimer coverage).
+- Full re-verification after the move: 22/22 tests, deployment checks all green
+  (isolation still zero-rows), `app.py` imports clean.

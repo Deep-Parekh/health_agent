@@ -22,10 +22,10 @@ from langchain_core.language_models import BaseLanguageModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
-from common import HealthAgentConfig, ToolLoggingHandler, build_llm, logger
-from diet_tools import get_diet_tools
-from workout_tools import get_workout_tools
-from memory import UserStore, format_profile, make_profile_tools
+from healthva.common import HealthAgentConfig, ToolLoggingHandler, build_llm, logger
+from healthva.diet_tools import get_diet_tools
+from healthva.workout_tools import get_workout_tools
+from healthva.memory import UserStore, format_profile, make_profile_tools
 
 DOMAINS = ("diet", "workout", "both", "general")
 

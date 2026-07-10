@@ -7,7 +7,7 @@ persist across sessions.
 
 Combines [DietVA](https://huggingface.co/spaces/DeepParekh/diet_app) (diet agent) with the
 workout module (873-exercise public-domain DB, injury guardrails with a
-[published evaluation](../lifestyle_agent/EVALUATION.md)) — both source projects remain
+[published evaluation](docs/EVALUATION.md)) — both source projects remain
 separate, deployed showcases.
 
 ## Architecture
@@ -26,11 +26,11 @@ user turn ──► router (keyword fast path ► LLM for ambiguous) ──► d
 
 | File | Role |
 |------|------|
-| `agents.py` | Router (hybrid keyword/LLM), domain prompts, `HealthAgent` orchestration, grounding enforcement |
-| `memory.py` | `UserStore` — Supabase Postgres (`DATABASE_URL`) or local SQLite fallback; whitelisted profile schema; per-session `UserScope` + Postgres row-level security for cross-user isolation; get/update profile tools |
-| `diet_tools.py` | BMR/TDEE, food lookup (FoodData Central subset), recipe search, unit convert, web search |
-| `workout_tools.py` | Exercise search, session & weekly plan builders, 1RM — with injury classification and joint load-path exclusions |
-| `common.py` | Config, LLM backends (OpenAI deployed; Groq/Ollama supported), input guardrails, JSONL tool logging |
+| `healthva/agents.py` | Router (hybrid keyword/LLM), domain prompts, `HealthAgent` orchestration, grounding enforcement |
+| `healthva/memory.py` | `UserStore` — Supabase Postgres (`DATABASE_URL`) or local SQLite fallback; whitelisted profile schema; per-session `UserScope` + Postgres row-level security for cross-user isolation; get/update profile tools |
+| `healthva/diet_tools.py` | BMR/TDEE, food lookup (FoodData Central subset), recipe search, unit convert, web search |
+| `healthva/workout_tools.py` | Exercise search, session & weekly plan builders, 1RM — with injury classification and joint load-path exclusions |
+| `healthva/common.py` | Config, LLM backends (OpenAI deployed; Groq/Ollama supported), input guardrails, JSONL tool logging |
 | `app.py` | Gradio UI: username-keyed profiles, live route badge, agent activity panel |
 
 ## Key design decisions
@@ -51,7 +51,7 @@ user turn ──► router (keyword fast path ► LLM for ambiguous) ──► d
   access is structurally impossible for both app code and the LLM — and Postgres
   row-level security enforces the same boundary inside the database (scoped transactions
   drop to a non-privileged role with a policy keyed on the session user). Verified by an
-  adversarial check in `verify_deployment.py` that attempts real cross-user reads and
+  adversarial check in `scripts/verify_deployment.py` that attempts real cross-user reads and
   writes against the live DB: zero rows in every direction.
 - **Profile replaces the diet agent's "gatekeeper"**: stable facts are stored once instead
   of re-extracted from conversation every session.
@@ -71,8 +71,8 @@ Backend auto-detects from whichever key is set: `OPENAI_API_KEY` → OpenAI (gpt
 ## Tests
 
 ```bash
-python -m unittest test_router_memory test_injury_guardrail -v   # 20 tests
-python eval_injury_guardrail.py                                  # injury guardrail eval report
+python -m unittest discover -s tests -t . -v                    # 22 tests
+python scripts/eval_injury_guardrail.py            # regenerates docs/EVALUATION.md
 ```
 
 ## Deploy (HF Spaces)

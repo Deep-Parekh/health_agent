@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 from langchain.tools import BaseTool
 from duckduckgo_search import DDGS
 
-from common import FDC_PATH, RECIPES_DB_PATH
+from healthva.common import FDC_PATH, RECIPES_DB_PATH
 
 
 # --- Args schemas ---

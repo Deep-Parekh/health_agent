@@ -75,4 +75,4 @@ data/users.db
 !.env.example
 
 # local-only contributor doc (Deep: keep out of the repo)
-architecture.html
+docs/architecture.html

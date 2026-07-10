@@ -10,7 +10,7 @@ import os
 
 import gradio as gr
 
-from common import (
+from healthva.common import (
     HealthAgentConfig,
     TOOL_LOG_PATH,
     ToolLoggingHandler,
@@ -19,7 +19,7 @@ from common import (
     is_prompt_leak_request,
     logger,
 )
-from agents import HealthAgent
+from healthva.agents import HealthAgent
 
 ROUTE_BADGES = {
     "diet": "🥗 diet tools loaded",
