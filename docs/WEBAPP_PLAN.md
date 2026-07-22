@@ -133,8 +133,13 @@ equipment) — 3×8–12`). Two clean options, decide at build:
    handler gained an in-memory `events` list so `/chat` returns a structured `tool_trace`.
    Verified via FastAPI TestClient against real OpenAI (SQLite fallback, since Supabase
    was paused): workout turn routed + called build_weekly_plan (no barbell), profile
-   saved, medical question blocked, trace returned. **Remaining:** `modal deploy` (needs
-   owner: Modal auth + secret), then `verify_deployment.py --remote <url>`.
+   saved, medical question blocked, trace returned.
+   **DEPLOYED to Modal 2026-07-21:** `https://deep-parekh--healthva-fastapi-app.modal.run`
+   (`modal deploy modal_app.py`). Live-verified with `verify_deployment.py --remote`:
+   /health ok; /chat returns 401 without key and 200 with it; workout turn ran
+   get/update_user_profile + build_weekly_plan, diet turn ran recipe_search — so routing,
+   grounding, AND Supabase-from-Modal memory all work over HTTPS. Phase 1 COMPLETE.
+   Repeatable smoke test: `AGENT_API_SECRET=… python scripts/verify_deployment.py --remote <url>`.
 2. **Portfolio page** — console UI, proxy route, structured plan/meal cards, activity
    inspector; wired to the API.
 3. **Polish** — suggested prompts, empty state, mobile (inspector collapses under chat),

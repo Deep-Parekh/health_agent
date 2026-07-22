@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+import json
 import os
 import sys
 
@@ -162,14 +163,63 @@ def check_live(config, store) -> None:
         report(False, "Live profile check", sanitized(exc))
 
 
+def check_remote(base_url: str) -> None:
+    """Hit a deployed /health and /chat (e.g. the Modal URL). Needs the
+    AGENT_API_SECRET env var to match the deployment's secret; the value is
+    read from the environment and never printed."""
+    import urllib.request
+
+    base_url = base_url.rstrip("/")
+    secret = os.getenv("AGENT_API_SECRET")
+
+    def call(path, payload=None):
+        headers = {"Content-Type": "application/json"}
+        if secret:
+            headers["X-API-Key"] = secret
+        data = json.dumps(payload).encode() if payload is not None else None
+        req = urllib.request.Request(base_url + path, data=data, headers=headers,
+                                     method="POST" if data else "GET")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.status, json.loads(resp.read())
+
+    try:
+        status, body = call("/health")
+        report(status == 200 and body.get("status") == "ok",
+               "Remote /health", f"backend={body.get('backend')}, model={body.get('model')}")
+    except Exception as exc:
+        report(False, "Remote /health", sanitized(exc))
+        return
+    if not secret:
+        report(False, "Remote /chat", "set AGENT_API_SECRET to test the authed endpoint")
+        return
+    for label, msg in [
+        ("workout", "3-day push pull legs, beginner, dumbbells only, torn ACL. Save it and plan my week."),
+        ("diet", "high-protein vegetarian dinner for me"),
+    ]:
+        try:
+            status, d = call("/chat", {"username": "_remote_probe", "message": msg, "history": []})
+            tools = [e.get("tool") for e in d.get("tool_trace", []) if e.get("event") == "tool_start"]
+            report(status == 200 and bool(d.get("reply")),
+                   f"Remote /chat [{label}]", f"route={d.get('route')}, tools={tools}")
+        except Exception as exc:
+            report(False, f"Remote /chat [{label}]", sanitized(exc))
+
+
 if __name__ == "__main__":
     print("— HealthVA deployment verification —")
-    backend = check_env()
-    store = check_store()
-    config = check_llm(backend)
-    if "--live" in sys.argv and config and store:
-        check_live(config, store)
-    elif "--live" in sys.argv:
-        print(f"{WARN} skipping live checks: prerequisites failed")
+    remote = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--remote=")), None)
+    if "--remote" in sys.argv:
+        i = sys.argv.index("--remote")
+        remote = sys.argv[i + 1] if i + 1 < len(sys.argv) else remote
+    if remote:
+        check_remote(remote)
+    else:
+        backend = check_env()
+        store = check_store()
+        config = check_llm(backend)
+        if "--live" in sys.argv and config and store:
+            check_live(config, store)
+        elif "--live" in sys.argv:
+            print(f"{WARN} skipping live checks: prerequisites failed")
     print(f"\n{'ALL CHECKS PASSED' if failures == 0 else f'{failures} CHECK(S) FAILED'}")
     sys.exit(1 if failures else 0)

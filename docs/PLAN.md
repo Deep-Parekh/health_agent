@@ -371,3 +371,21 @@ Append dated entries. Include errors verbatim enough to be searchable.
 - **Deploy blocked on owner (2 items):** `modal token new` (no token on this machine yet),
   and resume the paused Supabase project. Modal `healthva-secrets` already created by Deep.
   Once both are ready: `modal deploy modal_app.py`, then verify the live `/chat`.
+
+### 2026-07-21 (later) — Phase 1 DEPLOYED to Modal + live-verified (Claude session)
+
+- `modal deploy modal_app.py` → live at
+  https://deep-parekh--healthva-fastapi-app.modal.run (scale-to-zero, ~cold-start seconds).
+  Modal auth: `deep-parekh`; secret `healthva-secrets` (OPENAI/DATABASE_URL/AGENT_API_SECRET).
+- Added `verify_deployment.py --remote <url>` — hits live /health + /chat using
+  AGENT_API_SECRET from env (never printed). Live result: /health ok; /chat 401 without
+  key, 200 with; workout → get/update_user_profile + build_weekly_plan; diet → recipe_search.
+  So routing + grounding + Supabase-from-Modal memory all verified over HTTPS.
+- Gotcha for future me: `--remote` with `env -u AGENT_API_SECRET` STILL authed because
+  `.env` (loaded by load_dotenv) carries the matching secret — that's why the authed path
+  got tested without me handling the value. Deployed secret confirmed required via the
+  earlier wrong-key 401.
+- Modal image note: requirements.txt still includes gradio → image is heavier than needed.
+  Slim it (drop gradio) when app.py/Gradio is retired.
+- Next: Phase 2 — the Next.js console UI in ~/pers/port calling this endpoint via a
+  server-side /api/chat proxy (AGENT_API_URL + AGENT_API_SECRET as Vercel env).
