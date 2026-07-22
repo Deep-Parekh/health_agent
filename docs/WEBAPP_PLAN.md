@@ -55,6 +55,11 @@ The entire coupling surface:
   `GET /health` returns `{status, contract_version}` so drift is detectable.
 - **Config (no hardcoded URLs)** — `port` (Vercel env): `AGENT_API_URL`, `AGENT_API_SECRET`.
   Modal secrets: `OPENAI_API_KEY`, `DATABASE_URL`, `AGENT_API_SECRET` (must match `port`).
+  **Secret placement (do NOT sprawl):** OpenAI key + DATABASE_URL live ONLY where code
+  calls them = Modal (+ local health_agent `.env`). They must NEVER go in Vercel — the
+  UI/proxy never touches OpenAI or the DB, only Modal does. Vercel needs exactly two:
+  `AGENT_API_URL` (public Modal URL) + `AGENT_API_SECRET` (the only value shared between
+  Vercel and Modal). `AGENT_API_SECRET` is the whole security boundary; URL is not secret.
 - **Deploys are independent** — agent change → `modal deploy` from health_agent; UI change →
   `git push` → Vercel auto-builds port. On a contract change, deploy the API first
   (additive: add fields, never rename), then the UI.
