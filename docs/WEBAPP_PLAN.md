@@ -149,11 +149,11 @@ equipment) — 3×8–12`). Two clean options, decide at build:
 
 ## Known follow-ups (not blockers)
 
-- **Eager DB connect at startup.** `HealthAgent()` → `UserStore()` opens Postgres at
-  import time, so a Modal cold container crashes to boot if Supabase is briefly
-  unreachable (free-tier pauses, circuit-breaker). Recommended small hardening: make
-  `UserStore` schema-init lazy + tolerant, so the app boots and returns a clean
-  per-request error instead of failing readiness. Do before/with the Modal deploy.
+- ~~**Eager DB connect at startup.**~~ ✅ FIXED (2026-07-21). `UserStore` schema init is
+  now lazy (`_ensure_schema`, once, on first use) — construction never connects, so the
+  app boots even with Postgres down. `HealthAgent.chat` wraps profile-injection in
+  try/except → a memory outage degrades to a stateless (no-memory) answer, not a 500.
+  Proven against the paused Supabase: app booted, `/chat` returned 200 with a real plan.
 - **Supabase free tier pauses after ~7 days idle** (hit on 2026-07-21: `ECIRCUITBREAKER,
   failed to retrieve database credentials`). Resume from the dashboard before deploy; a
   keep-warm ping or the paid tier avoids it for a always-available demo.

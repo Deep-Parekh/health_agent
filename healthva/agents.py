@@ -281,8 +281,14 @@ class HealthAgent:
         messages.append(HumanMessage(content=message))
         messages = truncate_history(messages, self.config.max_history_turns)
 
-        # Ground the agent in stored memory without it having to ask.
-        profile = self.store.scope(username).get_profile()
+        # Ground the agent in stored memory without it having to ask. Degrade
+        # gracefully: if the profile store is briefly unreachable (Supabase
+        # free-tier pause), answer statelessly rather than failing the whole turn.
+        try:
+            profile = self.store.scope(username).get_profile()
+        except Exception as exc:
+            logger.warning("Profile unavailable, proceeding without memory (%s)", type(exc).__name__)
+            profile = {}
         if profile:
             messages.insert(
                 0,

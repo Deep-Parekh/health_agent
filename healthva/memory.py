@@ -107,11 +107,22 @@ class UserStore:
     def __init__(self, database_url: Optional[str] = None):
         self.database_url = database_url or os.getenv("DATABASE_URL")
         self.backend = "postgres" if self.database_url else "sqlite"
+        self.app_role: Optional[str] = None
+        self._schema_ready = False
         if self.backend == "sqlite":
             logger.info("UserStore: DATABASE_URL not set, using local SQLite at %s", USERS_DB_PATH)
         else:
-            logger.info("UserStore: using Postgres")
+            logger.info("UserStore: using Postgres (schema init deferred to first use)")
+        # NOTE: schema init is LAZY — do not connect here. A Modal cold container
+        # must boot even if Postgres is momentarily unreachable (Supabase free-tier
+        # pause / circuit-breaker); the DB error then surfaces per-request, cleanly,
+        # instead of crashing startup/readiness.
+
+    def _ensure_schema(self) -> None:
+        if self._schema_ready:
+            return
         self._init_schema()
+        self._schema_ready = True
 
     def _connect(self):
         if self.backend == "postgres":
@@ -125,7 +136,6 @@ class UserStore:
         return "%s" if self.backend == "postgres" else "?"
 
     def _init_schema(self) -> None:
-        self.app_role: Optional[str] = None
         with self._connect() as conn:
             conn.execute(_SCHEMA)
             if self.backend == "postgres":
@@ -202,6 +212,7 @@ class UserScope:
         return conn.execute(sql, params)
 
     def get_profile(self) -> Dict[str, Any]:
+        self._store._ensure_schema()
         ph = self._store._ph
         with self._store._connect() as conn:
             cur = self._execute(
@@ -212,6 +223,7 @@ class UserScope:
 
     def update_profile(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         """Merge validated updates into the stored profile and return it."""
+        self._store._ensure_schema()
         clean = validate_profile_updates(updates)
         profile = self.get_profile()
         profile.update(clean)
@@ -232,6 +244,7 @@ class UserScope:
         return profile
 
     def delete_profile(self) -> None:
+        self._store._ensure_schema()
         ph = self._store._ph
         with self._store._connect() as conn:
             self._execute(

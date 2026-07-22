@@ -353,3 +353,21 @@ Append dated entries. Include errors verbatim enough to be searchable.
   port 7860, so the new boot died ("Cannot find empty port") and gradio_client silently
   tested the OLD process. Before UI testing: `pkill -f app.py` and check
   `lsof -iTCP:7860`.
+
+### 2026-07-21 — Phase 1 web-app backend: FastAPI + Modal + DB resilience (Claude session)
+
+- Building the custom web UI (see docs/WEBAPP_PLAN.md), moving off Gradio/HF to a
+  Next.js UI on Vercel + Python agent on Modal. Phase 1 = the API wrapper.
+- `api.py` (FastAPI) wraps `HealthAgent.chat` — `GET /health`, `POST /chat` with
+  `X-API-Key` auth + the app.py input guardrails; returns `{reply, route, tool_trace,
+  profile}`. `modal_app.py` = Modal ASGI stub (scale-to-zero, `healthva-secrets`).
+  `common.py` handler now keeps a structured `events` list for the trace. Agent logic
+  UNCHANGED.
+- **DB resilience (important, do-not-regress):** `UserStore.__init__` no longer connects
+  — schema init is lazy via `_ensure_schema()`. `HealthAgent.chat` degrades to stateless
+  if the profile read fails. Reason: Supabase free tier PAUSED again on 2026-07-21
+  (`ECIRCUITBREAKER`), which used to crash the app at import. Verified: app boots + `/chat`
+  returns 200 with a real plan even while Supabase is down. 37 tests green.
+- **Deploy blocked on owner (2 items):** `modal token new` (no token on this machine yet),
+  and resume the paused Supabase project. Modal `healthva-secrets` already created by Deep.
+  Once both are ready: `modal deploy modal_app.py`, then verify the live `/chat`.
