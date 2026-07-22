@@ -173,3 +173,26 @@ equipment) — 3×8–12`). Two clean options, decide at build:
 - [x] UI mockup in portfolio theme (artifact)
 - [x] Backend host chosen — **Modal** (2026-07-10)
 - [ ] Approval to start Phase 1 (API wrapper) — needs Deep
+
+## Phase 2 status (2026-07-21): UI BUILT + verified locally
+
+Built in `~/pers/port` (Next.js 16, committed locally on `main`, NOT yet pushed to
+Vercel — awaiting owner OK since it changes the live public site):
+- `app/api/chat/route.ts` — server-side proxy to Modal (AGENT_API_URL + AGENT_API_SECRET
+  server-side only; browser calls same-origin).
+- `app/health-agent/{page.tsx,types.ts}` — the demo route + shared contract types.
+- `components/health-agent/` — Console (single-column, username session in localStorage,
+  instant-echo two-stage send), Message + Markdown (dependency-free renderer), Composer
+  (suggested prompts), ActivityChip (progressive disclosure: collapsed summary → expand
+  route/tool-args/grounding/memory; fills while working). All styled via globals.css
+  tokens → inherits the site's light/dark themes.
+- Navbar: added HealthVA item.
+
+Verified: `next build` clean (all routes incl. /api/chat dynamic, /health-agent static);
+dev server end-to-end — page 200, and `/api/chat` proxied to Modal returning a real
+workout turn (route=workout, build_workout, barbell excluded). Could not capture a browser
+screenshot (browser pane unresponsive this session); verified functionally via curl.
+
+**Remaining to go live:** (1) add `AGENT_API_URL` to Vercel env (secret already there);
+(2) push `port` main → Vercel deploy. Structured PlanCard rendering (day cards vs markdown)
+is a deferred polish — needs build_weekly_plan to also return JSON.
