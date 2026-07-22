@@ -14,7 +14,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Literal
+from typing import Any, Dict, List, Literal
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseLanguageModel
@@ -141,9 +141,11 @@ class ToolLoggingHandler(BaseCallbackHandler):
     def __init__(self, log_path: Path):
         self.log_path = log_path
         self.thought_process = []
+        self.events: List[Dict[str, Any]] = []  # structured trace for the web API
 
     def _write(self, record: Dict[str, Any]) -> None:
         record["timestamp"] = time.time()
+        self.events.append(record)
         self.log_path.parent.mkdir(exist_ok=True, parents=True)
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, default=str) + "\n")

@@ -1,5 +1,8 @@
-# HF Spaces installs from this file (Gradio SDK). Groq backend only — slim.
+# Runtime deps for the FastAPI backend (Modal image installs from this file).
+# gradio is retained only for the legacy app.py; drop it when that is retired.
 duckduckgo-search>=4.1.0
+fastapi>=0.115
+uvicorn[standard]>=0.30
 gradio>=5.23.1
 langchain>=1.1.2
 langchain-core>=1.1.1
