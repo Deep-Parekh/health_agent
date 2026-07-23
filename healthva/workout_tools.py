@@ -629,6 +629,103 @@ def build_workout(
     }
 
 
+# Time model: a strength exercise ≈ 3 working sets + rest ≈ 8 min; a cardio
+# block ≈ 25 min. Used to turn a user's session length into an exercise target
+# and to report an estimated duration per day.
+MIN_PER_STRENGTH_EX = 8
+MIN_PER_CARDIO_EX = 25
+DEFAULT_SESSION_MIN = 60          # used when the user doesn't specify a time
+DEFAULT_SESSION_RANGE = (45, 75)  # what the agent should offer as a sensible range
+_PER_MUSCLE_CAP_DEFAULT = 3       # cap per muscle before spreading, for variety
+
+
+def _target_exercises(minutes: int) -> int:
+    """Turn a session length into a strength-exercise count (clamped 3–10)."""
+    return max(3, min(10, round(minutes / MIN_PER_STRENGTH_EX)))
+
+
+def _minutes_for_day(minutes_per_day: Union[int, List[int], None], index: int) -> int:
+    """Resolve the session length for a given day. None -> default; a list is
+    per-day (last value repeats if the list is shorter than the week)."""
+    if minutes_per_day is None:
+        return DEFAULT_SESSION_MIN
+    if isinstance(minutes_per_day, (list, tuple)):
+        if not minutes_per_day:
+            return DEFAULT_SESSION_MIN
+        return int(minutes_per_day[index] if index < len(minutes_per_day) else minutes_per_day[-1])
+    return int(minutes_per_day)
+
+
+def _muscle_pool(
+    muscle, level, equipment, exclude_muscles, exclude_categories,
+    exclude_force_rules, exclude_equipment,
+) -> List[dict]:
+    """Ordered candidate list for one muscle (compound first), bodyweight
+    fallback, WITHOUT touching the week-level `used` set."""
+    candidates = exercise_search(
+        muscle=muscle, level=level, equipment=equipment,
+        exclude_muscles=exclude_muscles, exclude_categories=exclude_categories,
+        exclude_force_rules=exclude_force_rules, exclude_equipment=exclude_equipment,
+        max_results=40,
+    )
+    if not candidates and equipment:
+        candidates = exercise_search(
+            muscle=muscle, level=level, equipment="body only",
+            exclude_muscles=exclude_muscles, exclude_categories=exclude_categories,
+            exclude_force_rules=exclude_force_rules, exclude_equipment=exclude_equipment,
+            max_results=40,
+        )
+    compound = [e for e in candidates if e["mechanic"] == "compound"]
+    isolation = [e for e in candidates if e["mechanic"] != "compound"]
+    return compound + isolation
+
+
+def _fill_balanced(pools: Dict[str, List[dict]], target: int, used: set) -> List[tuple]:
+    """Round-robin across muscles to reach `target` picks, giving every muscle
+    at least one (coverage) then spreading evenly. When a muscle is starved
+    (few matches for the equipment), the cap is raised so muscles with depth
+    fill the slack — so days land near the same length instead of one being short.
+    Returns [(muscle, exercise), ...]."""
+    if not pools:
+        return []
+    # Never drop below one-per-muscle: protects weekly muscle coverage.
+    target = max(target, len(pools))
+    picks: List[tuple] = []
+    counts = {m: 0 for m in pools}
+    cap = _PER_MUSCLE_CAP_DEFAULT
+    while len(picks) < target:
+        progress = False
+        for muscle, pool in pools.items():
+            if len(picks) >= target:
+                break
+            if counts[muscle] >= cap:
+                continue
+            nxt = next((e for e in pool if e["name"] not in used), None)
+            if nxt:
+                used.add(nxt["name"])
+                counts[muscle] += 1
+                picks.append((muscle, nxt))
+                progress = True
+        if not progress:
+            # Everyone capped or exhausted. Raise the cap if any muscle still
+            # has fresh candidates; otherwise the day is genuinely tapped out.
+            has_fresh = any(
+                next((e for e in pool if e["name"] not in used), None)
+                for pool in pools.values()
+            )
+            if has_fresh:
+                cap += 1
+                continue
+            break
+    return picks
+
+
+def _estimate_minutes(session: List[dict]) -> int:
+    strength = sum(1 for ex in session if ex.get("category") != "cardio")
+    cardio = sum(1 for ex in session if ex.get("category") == "cardio")
+    return strength * MIN_PER_STRENGTH_EX + cardio * MIN_PER_CARDIO_EX
+
+
 def build_weekly_plan(
     days_per_week: int,
     level: str = "beginner",
@@ -639,8 +736,14 @@ def build_weekly_plan(
     exercises_per_muscle: int = 2,
     split: Optional[str] = None,
     exclude_equipment: Union[str, List[str], None] = None,
+    minutes_per_day: Union[int, List[int], None] = None,
 ) -> dict:
-    """Build a grounded weekly plan from a named or default database split."""
+    """Build a grounded weekly plan from a named or default database split.
+
+    Each day is filled to a target volume so days are balanced (no day much
+    shorter than the others). The target comes from `minutes_per_day` — a single
+    length for the week, a per-day list, or None to use a sensible default.
+    """
     if days_per_week < 1:
         raise ValueError("days_per_week must be at least 1")
     if days_per_week > 6:
@@ -657,64 +760,81 @@ def build_weekly_plan(
     used: set = set()
     all_skipped: set = set()
     no_safe_match: set = set()
-    for split_day in selected_split["days"]:
+    for i, split_day in enumerate(selected_split["days"]):
         day_name = split_day["day"]
         day_muscles = split_day["muscles"]
         trainable = [m for m in day_muscles if m not in exclusions["muscles"]]
         all_skipped.update(m for m in day_muscles if m in exclusions["muscles"])
+        minutes = _minutes_for_day(minutes_per_day, i)
+        target = _target_exercises(minutes)
         session = []
+
         if split_day["is_cardio"]:
+            # 1 cardio block for a short day, 2 for a longer one; core fills the rest.
+            cardio_n = 2 if minutes >= 60 else 1
             cardio_picks = _pick_cardio_exercises(
-                level,
-                equipment,
-                exclusions["muscles"],
-                exclude_categories,
-                exclusions["force_rules"],
-                exercises_per_muscle,
-                used,
+                level, equipment, exclusions["muscles"], exclude_categories,
+                exclusions["force_rules"], cardio_n, used,
                 exclude_equipment=exclude_equipment,
             )
             if not cardio_picks:
                 no_safe_match.add("cardio")
             for ex in cardio_picks:
-                session.append(
-                    {
-                        "muscle": "cardio",
-                        "name": ex["name"],
-                        "mechanic": ex["mechanic"],
-                        "equipment": ex["equipment"],
-                        "category": ex["category"],
-                        "suggested_sets": 1,
-                        "suggested_reps": "20-30 minutes",
-                    }
-                )
-        for muscle in trainable:
-            picks = _pick_exercises(
-                muscle, level, equipment,
-                exclusions["muscles"], exclude_categories,
-                exclusions["force_rules"], exercises_per_muscle, used,
-                exclude_equipment=exclude_equipment,
-            )
-            if not picks:
-                no_safe_match.add(muscle)
-            for ex in picks:
-                session.append(
-                    {
-                        "muscle": muscle,
-                        "name": ex["name"],
-                        "mechanic": ex["mechanic"],
-                        "equipment": ex["equipment"],
-                        "category": ex["category"],
-                        "suggested_sets": 3,
-                        "suggested_reps": "8-12" if ex["mechanic"] == "compound" else "10-15",
-                    }
-                )
-        days.append(
-            {
-                "day": day_name,
-                "is_cardio": split_day["is_cardio"],
-                "exercises": session,
+                session.append({
+                    "muscle": "cardio", "name": ex["name"], "mechanic": ex["mechanic"],
+                    "equipment": ex["equipment"], "category": ex["category"],
+                    "suggested_sets": 1, "suggested_reps": "20-30 minutes",
+                })
+            # Remaining time → core work. Each cardio block ≈ 3 strength slots.
+            core_target = max(0, target - len(cardio_picks) * 3)
+            pools = {
+                m: _muscle_pool(m, level, equipment, exclusions["muscles"],
+                                exclude_categories, exclusions["force_rules"], exclude_equipment)
+                for m in trainable
             }
+            for muscle, ex in _fill_balanced(pools, core_target, used):
+                session.append({
+                    "muscle": muscle, "name": ex["name"], "mechanic": ex["mechanic"],
+                    "equipment": ex["equipment"], "category": ex["category"],
+                    "suggested_sets": 3,
+                    "suggested_reps": "8-12" if ex["mechanic"] == "compound" else "10-15",
+                })
+        else:
+            pools = {
+                m: _muscle_pool(m, level, equipment, exclusions["muscles"],
+                                exclude_categories, exclusions["force_rules"], exclude_equipment)
+                for m in trainable
+            }
+            for muscle in trainable:
+                if not pools[muscle]:
+                    no_safe_match.add(muscle)
+            for muscle, ex in _fill_balanced(pools, target, used):
+                session.append({
+                    "muscle": muscle, "name": ex["name"], "mechanic": ex["mechanic"],
+                    "equipment": ex["equipment"], "category": ex["category"],
+                    "suggested_sets": 3,
+                    "suggested_reps": "8-12" if ex["mechanic"] == "compound" else "10-15",
+                })
+
+        days.append({
+            "day": day_name,
+            "is_cardio": split_day["is_cardio"],
+            "exercises": session,
+            "target_minutes": minutes,
+            "estimated_minutes": _estimate_minutes(session),
+        })
+
+    # Flag days the DB couldn't fill to target (usually bodyweight-only pulling):
+    # be honest rather than bloat other days or fake balance.
+    short_days = [
+        d["day"] for d in days
+        if not d["is_cardio"] and len(d["exercises"]) < _target_exercises(d["target_minutes"]) - 1
+    ]
+    if short_days:
+        notes.append(
+            "Shorter than target (limited exercises for the available equipment): "
+            + ", ".join(short_days)
+            + ". Adding a pull-up bar or resistance bands would even these out."
         )
 
     interpretation = format_injury_interpretation(exclusions["mapped"])
@@ -1021,6 +1141,16 @@ class BuildWeeklyPlanArgs(BaseModel):
         None, description="User's height in cm (used with weight_kg for a BMI-based screen)"
     )
     exercises_per_muscle: int = Field(2, description="Exercises per muscle group per day (1-3)")
+    minutes_per_day: Optional[Union[int, List[int]]] = Field(
+        None,
+        description=(
+            "OPTIONAL session length in minutes. Only set this if the user tells you "
+            "how long they want to train — do NOT force them to provide it. Pass a "
+            "single number for the whole week (e.g. 60), or a per-day list for "
+            "different lengths (e.g. [60, 30, 60, 30]). Omit to use a balanced "
+            "~60-minute default. Days are always filled to an even length regardless."
+        ),
+    )
 
 
 class BuildWeeklyPlanTool(BaseTool):
@@ -1047,6 +1177,7 @@ class BuildWeeklyPlanTool(BaseTool):
         exercises_per_muscle: Any = 2,
         split: Optional[str] = None,
         exclude_equipment: Optional[List[str]] = None,
+        minutes_per_day: Optional[Union[int, List[int]]] = None,
     ) -> str:
         try:
             days_per_week = int(days_per_week)
@@ -1072,6 +1203,7 @@ class BuildWeeklyPlanTool(BaseTool):
                 exercises_per_muscle=exercises_per_muscle,
                 split=split,
                 exclude_equipment=exclude_equipment,
+                minutes_per_day=minutes_per_day,
             )
         except Exception as exc:
             return f"Weekly plan error: {exc}"
@@ -1080,7 +1212,7 @@ class BuildWeeklyPlanTool(BaseTool):
             f"({plan['days_per_week']} training day(s))"
         ]
         for day in plan["days"]:
-            lines.append(f"\n{day['day']}:")
+            lines.append(f"\n{day['day']} (~{day['estimated_minutes']} min):")
             if day["exercises"]:
                 lines.extend("  " + s for s in _format_session(day["exercises"]))
             else:

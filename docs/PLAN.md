@@ -389,3 +389,20 @@ Append dated entries. Include errors verbatim enough to be searchable.
   Slim it (drop gradio) when app.py/Gradio is retired.
 - Next: Phase 2 — the Next.js console UI in ~/pers/port calling this endpoint via a
   server-side /api/chat proxy (AGENT_API_URL + AGENT_API_SECRET as Vercel env).
+
+### 2026-07-22 — Balanced days + optional per-day time budget (Claude session)
+
+- User reported unbalanced days (Pull day 3 exercises vs 6/9). Root cause: fixed
+  per-muscle count × uneven bodyweight availability × week-level dedup starving Pull.
+- Fix in build_weekly_plan: days now fill to a TARGET volume via `_fill_balanced`
+  (round-robin, one-per-muscle for coverage, cap raised when a muscle is starved so
+  muscles with depth fill the slack). Result: with real equipment a 3-day plan is
+  [8,8,8] ~64min each (was 6/3/9).
+- Optional time: `minutes_per_day` (None → ~60min default; single int; or per-day list
+  like [60,30,60]). minutes → target via ~8min/exercise. Days report estimated_minutes.
+  Prompt updated: agent OFFERS session length, never forces it; proceeds with defaults.
+- Honest limit: pure-bodyweight Pull is DB-limited (~4 max) — plan adds a "Shorter than
+  target … add a pull-up bar/bands" note rather than faking balance or bloating others.
+- Tests: tests/test_balance.py (8 tests); suite 45 green. Injury eval still 0 violations
+  (6,117 exercises). Image upload parked → docs/VISION_PLAN.md (reframed to equipment-photo).
+- Next: redeploy Modal so the live demo gets balanced plans.
