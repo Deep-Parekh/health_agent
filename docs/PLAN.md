@@ -406,3 +406,7 @@ Append dated entries. Include errors verbatim enough to be searchable.
 - Tests: tests/test_balance.py (8 tests); suite 45 green. Injury eval still 0 violations
   (6,117 exercises). Image upload parked → docs/VISION_PLAN.md (reframed to equipment-photo).
 - Next: redeploy Modal so the live demo gets balanced plans.
+- DEPLOYED to Modal (2026-07-22): balance fix live at
+  https://deep-parekh--healthva-fastapi-app.modal.run. Verified: a 3-day
+  dumbbell+cable plan returns ~64 min per day (balanced). Backend done; the
+  portfolio shows it once the Vercel /api/chat deploy is serving.
